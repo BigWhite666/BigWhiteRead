@@ -20,6 +20,227 @@ BigWhiteRead是一个用于Linux平台的内存操作工具，支持远程进程
 - Linux操作系统
 - 支持的CPU架构：x86、arm、arm64、x86_64
 - 需要具有对目标进程的访问权限（通常需要root权限）
+- 懒人精灵环境支持
+
+## 完整初始化代码
+
+```lua
+-- 初始化内存操作对象
+Mem = {
+    Pid = 0
+}
+
+print("欢迎使用懒人内存插件 当前版本号1.0,懒人精灵交流QQ群:308254130")
+work = getWorkPath()  -- 脚本工作目录
+local type = getCpuArch()  -- 获取CPU架构
+extractAssets("内存插件.rc", work)  -- 释放内存so库
+local sopath = ""
+print("当前CPU结构"..type)
+
+-- 根据CPU架构选择对应的SO库
+if type == 0 then
+    sopath = work .. "/liblrapi_x86.so"
+    print("当前系统架构：x86")
+elseif type == 1 then
+    sopath = work .. "/liblrapi_arm.so"
+    print("当前系统架构：arm")
+elseif type == 2 then
+    sopath = work .. "/liblrapi_arm64.so"
+    print("当前系统架构：arm64")
+elseif type == 3 then
+    sopath = work .. "/liblrapi_x86_64.so"
+    print("当前系统架构：x86_64")
+end
+
+-- 定义C函数原型
+ffi.cdef[[
+typedef struct {
+    long* addrs;
+    int count;
+} AddressData;
+
+typedef struct {
+    long long value;
+    int type;
+    unsigned long offset;
+} SearchCondition;
+
+typedef struct {
+    long* addresses;
+    int count;
+} SearchResult;
+
+SearchResult BigWhite_SearchWithOffset(int BigWhitePid, const SearchCondition* conditions, int conditionCount, int mem);
+void BigWhite_FreeSearchResult(SearchResult* result);
+
+int BigWhite_GetPID(const char *packageName);
+int BigWhite_GetPID2(const char *packageName);
+unsigned long BigWhite_GetModuleBase(int pid, const char *module_name);
+unsigned long BigWhite_GetPtr64(int BigWhitePid, unsigned long addr);
+unsigned long BigWhite_GetPtr32(int BigWhitePid, unsigned long addr);
+int BigWhite_GetDword(int BigWhitePid, unsigned long addr);
+float BigWhite_GetFloat(int BigWhitePid, unsigned long addr);
+bool BigWhite_WriteDword(int BigWhitePid, unsigned long addr, int data);
+bool BigWhite_WriteFloat(int BigWhitePid, unsigned long addr, float data);
+
+AddressData Search_DWORD(int BigWhitePid, int value, int mem);
+AddressData Search_FLOAT(int BigWhitePid, float value, int mem);
+AddressData Search_BYTE(int BigWhitePid, char value, int mem);
+AddressData Search_WORD(int BigWhitePid, short value, int mem);
+AddressData Search_QWORD(int BigWhitePid, long long value, int mem);
+AddressData Search_XOR(int BigWhitePid, int value, int mem);
+AddressData Search_DOUBLE(int BigWhitePid, double value, int mem);
+]]
+
+-- 内存区域类型常量定义
+--[===[
+Mem_Auto = 0  -- 所有内存页
+Mem_A    = 1  -- 通常为进程主要内存区域
+Mem_Ca   = 2  -- 堆内存区域(libc_malloc)
+Mem_Cd   = 3  -- 数据区域(/data/data/)
+Mem_Cb   = 4  -- BSS段(:bss)
+Mem_Jh   = 5  -- 堆内存
+Mem_J    = 6  -- Java堆内存([anon:dalvik)
+Mem_S    = 7  -- 栈内存([stack])
+Mem_V    = 8  -- 显存(/dev/kgsl-3d0)
+Mem_Xa   = 9  -- 应用程序代码区域(/data/app/)
+Mem_Xs   = 10 -- 系统框架区域(/system/framework/)
+Mem_As   = 11 -- 共享内存区域(/dev/ashmem/)
+Mem_B    = 12 -- 系统字体区域(/system/fonts/)
+Mem_O    = 13 -- 其他内存区域
+]===]
+
+-- 加载共享库
+local mylib = ffi.load(sopath)
+
+-- 检查是否成功加载
+if mylib then
+    print("内存插件加载成功！")
+else
+    print("内存插件加载失败！")
+    exitScript()
+end
+
+-- Lua包装函数实现
+function Mem.GetPID(PackageName)
+    Mem.Pid = mylib.BigWhite_GetPID(PackageName)
+    return Mem.Pid
+end
+
+function Mem.GetPID2(PackageName)
+    Mem.Pid = mylib.BigWhite_GetPID2(PackageName)
+    return Mem.Pid
+end
+
+function Mem.GetModuleBase(Lib)
+    return mylib.BigWhite_GetModuleBase(Mem.Pid, Lib)
+end
+
+function Mem.GetPtr64(Addr)
+    return mylib.BigWhite_GetPtr64(Mem.Pid, Addr)
+end
+
+function Mem.GetPtr32(Addr)
+    return mylib.BigWhite_GetPtr32(Mem.Pid, Addr)
+end
+
+function Mem.GetDword(Addr)
+    return mylib.BigWhite_GetDword(Mem.Pid, Addr)
+end
+
+function Mem.GetFloat(Addr)
+    return mylib.BigWhite_GetFloat(Mem.Pid, Addr)
+end
+
+function Mem.WriteDword(Addr, value)
+    return mylib.BigWhite_WriteDword(Mem.Pid, Addr, value)
+end
+
+function Mem.WriteFloat(Addr, value)
+    return mylib.BigWhite_WriteFloat(Mem.Pid, Addr, value)
+end
+
+function Mem.Search_DWORD(value, mem)
+    return mylib.Search_DWORD(Mem.Pid, value, mem)
+end
+
+function Mem.Search_FLOAT(value, mem)
+    return mylib.Search_FLOAT(Mem.Pid, value, mem)
+end
+
+function Mem.Search_BYTE(value, mem)
+    return mylib.Search_BYTE(Mem.Pid, value, mem)
+end
+
+function Mem.Search_WORD(value, mem)
+    return mylib.Search_WORD(Mem.Pid, value, mem)
+end
+
+function Mem.Search_QWORD(value, mem)
+    return mylib.Search_QWORD(Mem.Pid, value, mem)
+end
+
+function Mem.Search_XOR(value, mem)
+    return mylib.Search_XOR(Mem.Pid, value, mem)
+end
+
+function Mem.Search_DOUBLE(value, mem)
+    return mylib.Search_DOUBLE(Mem.Pid, value, mem)
+end
+
+function Mem.SearchWithOffset(conditions, mem)
+    if not conditions or #conditions == 0 then
+        return {count = 0, addresses = {}}
+    end
+    
+    local c_conditions = ffi.new("SearchCondition[?]", #conditions)
+    
+    for i, condition in ipairs(conditions) do
+        if not condition.value or not condition.type or not condition.offset then
+            return {count = 0, addresses = {}}
+        end
+        
+        c_conditions[i-1].value = tonumber(condition.value) or 0
+        c_conditions[i-1].type = tonumber(condition.type) or 0
+        c_conditions[i-1].offset = tonumber(condition.offset) or 0
+    end
+    
+    local result = mylib.BigWhite_SearchWithOffset(Mem.Pid, c_conditions, #conditions, mem)
+    
+    if not result or result.count <= 0 or not result.addresses then
+        return {count = 0, addresses = {}}
+    end
+    
+    local results = {
+        count = 0,
+        addresses = {}
+    }
+    
+    for i = 0, result.count - 1 do
+        local addr = result.addresses[i]
+        if addr and addr ~= 0 then
+            results.count = results.count + 1
+            table.insert(results.addresses, addr)
+        end
+    end
+    
+    Mem.FreeSearchResult(ffi.new("SearchResult*", result))
+    
+    return results
+end
+
+function Mem.FreeSearchResult(result)
+    mylib.BigWhite_FreeSearchResult(result)
+end
+
+function ReadPointer(...)
+    local ResultAddr = 0
+    for i, v in ipairs({...}) do
+        ResultAddr = Mem.GetPtr64(ResultAddr + v)
+    end
+    return ResultAddr
+end
+```
 
 ## 懒人精灵安装方法
 
@@ -29,23 +250,29 @@ BigWhiteRead是一个用于Linux平台的内存操作工具，支持远程进程
 - arm64：liblrapi_arm64.so
 - x86_64：liblrapi_x86_64.so
 
-初始化代码会自动检测CPU架构并加载相应的库文件：
-
-```lua
-work = getWorkPath()  -- 脚本工作目录
-local type = getCpuArch()  -- 获取CPU架构
-extractAssets("内存插件.rc", work)  -- 释放内存SO库
-```
-
 ## API详细参考
 
-### 初始化
+### 底层C函数结构体定义
 
-```lua
--- 初始化内存操作对象
-Mem = {
-    Pid = 0  -- 存储目标进程的PID
-}
+```c
+// 搜索结果数据结构
+typedef struct {
+    long* addrs;     // 长整型地址数组
+    int count;       // 结果数量
+} AddressData;
+
+// 搜索条件结构体
+typedef struct {
+    long long value;      // 搜索值
+    int type;            // 数据类型
+    unsigned long offset; // 偏移量
+} SearchCondition;
+
+// 带偏移搜索结果结构体
+typedef struct {
+    long* addresses;     // 地址数组
+    int count;          // 结果数量
+} SearchResult;
 ```
 
 ### 进程操作
@@ -338,7 +565,7 @@ local finalAddr = ReadPointer(baseAddr, 0x10, 0x20)
 print("最终地址:", string.format("0x%X", finalAddr))
 -- 等价于以下手动操作:
 local addr1 = Mem.GetPtr64(baseAddr + 0x10)
-local finalAddr = Mem.GetPtr64(addr1 +, 0x20)
+local finalAddr = Mem.GetPtr64(addr1 + 0x20)
 ```
 
 ```lua
@@ -501,6 +728,7 @@ Mem.FreeSearchResult(results)
 - 不同的内存区域有不同的权限，请根据实际情况选择合适的内存区域
 - 进行内存修改操作前，建议先备份重要数据
 - 工具的使用受限于Linux系统权限，某些系统上可能无法正常工作
+- 使用FFI库可能会因系统限制导致兼容性问题，请确保系统支持FFI操作
 
 ## 交流与支持
 
