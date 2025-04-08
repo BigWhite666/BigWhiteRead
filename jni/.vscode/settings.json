@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "charconv": "cpp",
+        "xmemory": "cpp",
+        "xutility": "cpp",
+        "system_error": "cpp",
+        "type_traits": "cpp",
+        "xlocmon": "cpp",
+        "xtr1common": "cpp"
+    }
+}
