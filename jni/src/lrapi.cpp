@@ -105,10 +105,37 @@ bool BigWhite_vm_readv(int BigWhitePid, unsigned long address, void *buffer, siz
     return BigWhite_pvm(BigWhitePid, reinterpret_cast<void *>(address), buffer, size, false);
 }
 
-// 写入内存
-bool BigWhite_vm_writev(int BigWhitePid, unsigned long address, void *buffer, size_t size)
-{
-    return BigWhite_pvm(BigWhitePid, reinterpret_cast<void *>(address), buffer, size, true);
+// 添加pwrite64写入函数
+bool BigWhite_pwrite64(int BigWhitePid, unsigned long address, void *buffer, size_t size) {
+    char filename[64];
+    snprintf(filename, sizeof(filename), "/proc/%d/mem", BigWhitePid);
+    int fd = open(filename, O_RDWR);
+    if (fd == -1) {
+        return false;
+    }
+    
+    ssize_t bytes = pwrite64(fd, buffer, size, address);
+    close(fd);
+    return bytes == size;
+}
+
+// 修改内存写入函数
+bool BigWhite_vm_writev(int BigWhitePid, unsigned long address, void *buffer, size_t size) {
+    // 首先尝试使用process_vm_writev
+    struct iovec local[1];
+    struct iovec remote[1];
+    local[0].iov_base = buffer;
+    local[0].iov_len = size;
+    remote[0].iov_base = (void*)address;
+    remote[0].iov_len = size;
+    
+    ssize_t bytes = BigWhite_process_v(BigWhitePid, local, 1, remote, 1, 0, true);
+    if (bytes == size) {
+        return true;
+    }
+    
+    // 如果process_vm_writev失败，尝试使用pwrite64
+    return BigWhite_pwrite64(BigWhitePid, address, buffer, size);
 }
 
 struct AddressData
@@ -260,7 +287,14 @@ AddressData search(int BigWhitePid, T value, int type, int mem, bool debug)
 
 // 定义搜索条件结构体
 struct SearchCondition {
-    long long value;      // 搜索值
+    union {
+        int i_value;
+        float f_value;
+        double d_value;
+        char b_value;
+        short w_value;
+        long long q_value;
+    } value;
     int type;            // 数据类型
     unsigned long offset; // 偏移量
 };
@@ -279,7 +313,30 @@ SearchResult searchWithOffset(int BigWhitePid, const SearchCondition* conditions
     result.count = 0;
     
     // 第一次搜索，使用第一个条件
-    AddressData firstResult = search<T>(BigWhitePid, conditions[0].value, conditions[0].type, mem, debug);
+    AddressData firstResult;
+    switch(conditions[0].type) {
+        case DWORD:
+            firstResult = search<int>(BigWhitePid, conditions[0].value.i_value, DWORD, mem, debug);
+            break;
+        case FLOAT:
+            firstResult = search<float>(BigWhitePid, conditions[0].value.f_value, FLOAT, mem, debug);
+            break;
+        case BYTE:
+            firstResult = search<char>(BigWhitePid, conditions[0].value.b_value, BYTE, mem, debug);
+            break;
+        case WORD:
+            firstResult = search<short>(BigWhitePid, conditions[0].value.w_value, WORD, mem, debug);
+            break;
+        case QWORD:
+            firstResult = search<long long>(BigWhitePid, conditions[0].value.q_value, QWORD, mem, debug);
+            break;
+        case DOUBLE:
+            firstResult = search<double>(BigWhitePid, conditions[0].value.d_value, DOUBLE, mem, debug);
+            break;
+        default:
+            return result;
+    }
+    
     if (firstResult.count == 0 || !firstResult.addrs) {
         return result;
     }
@@ -303,16 +360,55 @@ SearchResult searchWithOffset(int BigWhitePid, const SearchCondition* conditions
         // 检查后续条件
         for (int j = 1; j < conditionCount; j++) {
             long checkAddr = baseAddr + conditions[j].offset;
-            T value;
+            bool valueMatch = false;
             
-            // 读取内存值
-            if (!BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(T))) {
-                match = false;
-                break;
+            // 根据类型读取和比较值
+            switch(conditions[j].type) {
+                case DWORD: {
+                    int value;
+                    if (BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(int))) {
+                        valueMatch = (value == conditions[j].value.i_value);
+                    }
+                    break;
+                }
+                case FLOAT: {
+                    float value;
+                    if (BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(float))) {
+                        valueMatch = (value == conditions[j].value.f_value);
+                    }
+                    break;
+                }
+                case BYTE: {
+                    char value;
+                    if (BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(char))) {
+                        valueMatch = (value == conditions[j].value.b_value);
+                    }
+                    break;
+                }
+                case WORD: {
+                    short value;
+                    if (BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(short))) {
+                        valueMatch = (value == conditions[j].value.w_value);
+                    }
+                    break;
+                }
+                case QWORD: {
+                    long long value;
+                    if (BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(long long))) {
+                        valueMatch = (value == conditions[j].value.q_value);
+                    }
+                    break;
+                }
+                case DOUBLE: {
+                    double value;
+                    if (BigWhite_vm_readv(BigWhitePid, checkAddr, &value, sizeof(double))) {
+                        valueMatch = (value == conditions[j].value.d_value);
+                    }
+                    break;
+                }
             }
             
-            // 比较值
-            if (value != (T)conditions[j].value) {
+            if (!valueMatch) {
                 match = false;
                 break;
             }
@@ -348,7 +444,8 @@ struct Pattern {
     int length;             // 特征码长度
 };
 
-AddressData searchPattern(int BigWhitePid, const Pattern* pattern, int mem) {
+AddressData searchPattern(int BigWhitePid, const Pattern* pattern, int mem)
+{
     AddressData result;
     result.addrs = nullptr;
     result.count = 0;
@@ -618,4 +715,3 @@ extern "C"
         
         return result;
     }
-}
